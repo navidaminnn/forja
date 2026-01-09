@@ -11,13 +11,13 @@ import scala.concurrent.ExecutionContext
 import Pass.*
 
 trait Pass extends ReflectiveEnumeration.Enumerable:
-  final def perform(root: Node): Node =
+  final def perform(root: Node)(using tracer: PassTracer = PassTracer.Nop): Node =
     if root.containsError
     then root
     else performImpl(root)
   end perform
 
-  protected def performImpl(root: Node): Node
+  protected def performImpl(root: Node)(using tracer: PassTracer): Node
 end Pass
 
 object Pass:
@@ -30,7 +30,9 @@ object Pass:
         .getOrElse(Pattern.empty)
     end rewritesAgg
 
-    final protected def performImpl(node: Node): Node =
+    final protected def performImpl(node: Node)(using tracer: PassTracer): Node =
+      tracer.beforePass(this.getClass.getSimpleName, node)
+      
       @tailrec
       def impl(
           nodeSpan: NodeSpan,
@@ -66,8 +68,11 @@ object Pass:
               then impl(nextSpan, madeChangesThisIteration = false)
               else nextSpan
             else impl(nextSpan, madeChangesThisIteration)
-          case Some((_, nodeSpan)) =>
-            impl(nodeSpan.take(0), madeChangesThisIteration = true)
+          case Some((ruleName, nodeSpan)) =>
+            tracer.onRewriteMatch(ruleName, nodeSpan)
+            val resultSpan = nodeSpan.take(0)
+            tracer.onRewriteComplete(ruleName, resultSpan)
+            impl(resultSpan, madeChangesThisIteration = true)
       end impl
 
       val nodeSpan =
@@ -76,7 +81,9 @@ object Pass:
         nodeSpan.headOption
           .getOrElse(nodeSpan.expandRightOption(1).get.head)
       // Put our parents back
-      node.replaceThis(replacementNode)
+      val result = node.replaceThis(replacementNode)
+      tracer.afterPass(this.getClass.getSimpleName, result)
+      result
     end performImpl
   end RewritePass
 
@@ -267,7 +274,7 @@ object Pass:
 
   trait MultiPass extends Pass, ReflectiveEnumeration:
     private lazy val passes = valuesByType[Pass].map(_._2)
-    final protected def performImpl(root: Node): Node =
+    final protected def performImpl(root: Node)(using tracer: PassTracer): Node =
       var node = root
       passes.foreach: pass =>
         if !node.containsError

@@ -35,7 +35,7 @@ object Wf:
     private[forja] lazy val stableShapeSeq = shapeSeq
 
     object validate extends Pass:
-      protected def performImpl(root: Node): Node =
+      protected def performImpl(root: Node)(using tracer: PassTracer): Node =
         def implToken(node: Node, wf: TokenWf): Node =
           if node.containsError
           then return node
